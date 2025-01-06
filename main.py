@@ -57,6 +57,9 @@ def main():
     # Create experiment directory
     exp_name = f"parity_scaling_flops_{PARAMS['flop_budget']:.0e}"
     exp_dir = create_versioned_directory(Path("experiments"), exp_name)
+    print(f"Experiment directory: {exp_dir}")
+
+    print(f"FLOP budget: {PARAMS['flop_budget']}")
     
     tasks_dict = generate_dict(
         PARAMS['n_tasks'], 
