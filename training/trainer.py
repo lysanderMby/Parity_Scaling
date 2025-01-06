@@ -107,44 +107,84 @@ def train_and_evaluate(model, params, tasks_dict, exp_dir: Path, model_config: d
             unit_divisor=1000
         ) as progress_bar:
             
-            while cumulative_flops < params['flop_budget']:
-                epoch += 1
-                epoch_stats = train_epoch(model, params, tasks_dict, criterion, optimizer, 
-                                        forward_flops, backward_flops, logger)
+            # Check if model is too large for even one epoch
+            flops_per_epoch = forward_flops + backward_flops
+            if flops_per_epoch > params['flop_budget']:
+                logger.warning(f"Model requires {flops_per_epoch:,} FLOPs per epoch, "
+                             f"which exceeds budget of {params['flop_budget']:,}")
+                # Train for partial epoch
+                fraction = params['flop_budget'] / flops_per_epoch
+                num_samples = int(params['num_samples'] * fraction)
+                if num_samples < params['batch_size']:
+                    logger.error("FLOP budget too small for even one batch")
+                    return {
+                        'loss_data': [],
+                        'accuracy_data': [],
+                        'task_accuracy_data': task_accuracy_data,
+                        'cumulative_flops': 0,
+                        'model_config': model_config
+                    }
                 
-                # Update progress and stats
-                flops_delta = epoch_stats['cumulative_flops'] - cumulative_flops
-                cumulative_flops = epoch_stats['cumulative_flops']
-                progress_bar.update(flops_delta)
-                progress_bar.set_postfix({
-                    'epoch': epoch,
-                    'loss': f"{epoch_stats['avg_loss']:.4f}",
-                    'acc': f"{epoch_stats['avg_accuracy']:.4f}"
-                })
+                # Adjust params for partial epoch
+                partial_params = params.copy()
+                partial_params['num_samples'] = num_samples
                 
-                # Log metrics to file only
-                logger.info(f"Epoch {epoch} - Loss: {epoch_stats['avg_loss']:.4f}, "
-                           f"Accuracy: {epoch_stats['avg_accuracy']:.4f}, "
-                           f"Cumulative FLOPs: {cumulative_flops:,}")
+                epoch_stats = train_epoch(model, partial_params, tasks_dict, criterion, 
+                                        optimizer, forward_flops, backward_flops, logger)
+                
+                cumulative_flops = epoch_stats['epoch_flops']
+                progress_bar.update(cumulative_flops)
                 
                 loss_data.append((cumulative_flops, epoch_stats['avg_loss']))
                 accuracy_data.append((cumulative_flops, epoch_stats['avg_accuracy']))
                 
-                # Task-specific evaluation
-                if (cumulative_flops - last_task_sample >= params['task_sample_freq'] or 
-                    cumulative_flops >= params['flop_budget']):
-                    last_task_sample = cumulative_flops
-                    evaluate_tasks(model, tasks_dict, params, device, forward_flops,
-                                 cumulative_flops, task_accuracy_data)
+                # Do one evaluation
+                evaluate_tasks(model, tasks_dict, params, device, forward_flops,
+                             cumulative_flops, task_accuracy_data)
                 
-                # Plotting
-                if cumulative_flops - last_plot >= params['plot_freq']:
-                    last_plot = cumulative_flops
-                    plot_progress(loss_data, accuracy_data, task_accuracy_data, 
-                                cumulative_flops, model_dir)
+            else:
+                # Original training loop for models that fit within budget
+                while cumulative_flops < params['flop_budget']:
+                    epoch += 1
+                    epoch_stats = train_epoch(model, params, tasks_dict, criterion, optimizer, 
+                                            forward_flops, backward_flops, logger)
+                    
+                    new_flops = epoch_stats['epoch_flops']
+                    if cumulative_flops + new_flops > params['flop_budget']:
+                        # Adjust for partial epoch if needed
+                        fraction = (params['flop_budget'] - cumulative_flops) / new_flops
+                        partial_params = params.copy()
+                        partial_params['num_samples'] = int(params['num_samples'] * fraction)
+                        epoch_stats = train_epoch(model, partial_params, tasks_dict, criterion,
+                                                optimizer, forward_flops, backward_flops, logger)
+                        new_flops = epoch_stats['epoch_flops']
+                    
+                    cumulative_flops += new_flops
+                    progress_bar.update(new_flops)
+                    
+                    # Rest of the loop remains the same
+                    progress_bar.set_postfix({
+                        'epoch': epoch,
+                        'loss': f"{epoch_stats['avg_loss']:.4f}",
+                        'acc': f"{epoch_stats['avg_accuracy']:.4f}"
+                    })
+                    
+                    loss_data.append((cumulative_flops, epoch_stats['avg_loss']))
+                    accuracy_data.append((cumulative_flops, epoch_stats['avg_accuracy']))
+                    
+                    if (cumulative_flops - last_task_sample >= params['task_sample_freq'] or 
+                        cumulative_flops >= params['flop_budget']):
+                        last_task_sample = cumulative_flops
+                        evaluate_tasks(model, tasks_dict, params, device, forward_flops,
+                                     cumulative_flops, task_accuracy_data)
+                    
+                    if cumulative_flops - last_plot >= params['plot_freq']:
+                        last_plot = cumulative_flops
+                        plot_progress(loss_data, accuracy_data, task_accuracy_data, 
+                                    cumulative_flops, model_dir)
     
     finally:
-        # Clean up any remaining progress bars
+        # Clean up remaining progress bars. Can prevent bugs relating to terminal output overload
         try:
             progress_bar.close()
         except:
@@ -170,7 +210,7 @@ def train_epoch(model, params, tasks_dict, criterion, optimizer, forward_flops, 
     epoch_loss = 0.0
     correct = 0
     total = 0
-    cumulative_flops = 0
+    epoch_flops = 0  # Track FLOPs for this epoch
     
     for inputs, labels in data_loader:
         outputs = model(inputs)
@@ -184,12 +224,13 @@ def train_epoch(model, params, tasks_dict, criterion, optimizer, forward_flops, 
         optimizer.step()
 
         epoch_loss += batch_loss.item() * inputs.size(0)
-        cumulative_flops += forward_flops + backward_flops
+        # Add FLOPs for this batch
+        epoch_flops += forward_flops + backward_flops
 
     return {
         'avg_loss': epoch_loss / total,
         'avg_accuracy': correct / total,
-        'cumulative_flops': cumulative_flops
+        'epoch_flops': epoch_flops  # Return epoch FLOPs instead of cumulative
     }
 
 def evaluate_tasks(model, tasks_dict, params, device, forward_flops, 
