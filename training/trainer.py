@@ -96,53 +96,60 @@ def train_and_evaluate(model, params, tasks_dict, exp_dir: Path, model_config: d
     model_dir.mkdir(exist_ok=True)
 
     # Main progress bar for FLOPs
-    progress_bar = tqdm(
-        total=params['flop_budget'],
-        desc=f"Training {model_config['num_layers']}x{model_config['hidden_size']}",
-        position=1,
-        leave=False,
-        unit='FLOP',
-        unit_scale=True,
-        unit_divisor=1000
-    )
+    try:
+        with tqdm(
+            total=params['flop_budget'],
+            desc=f"Training {model_config['num_layers']}x{model_config['hidden_size']}",
+            position=1,
+            leave=False,
+            unit='FLOP',
+            unit_scale=True,
+            unit_divisor=1000
+        ) as progress_bar:
+            
+            while cumulative_flops < params['flop_budget']:
+                epoch += 1
+                epoch_stats = train_epoch(model, params, tasks_dict, criterion, optimizer, 
+                                        forward_flops, backward_flops, logger)
+                
+                # Update progress and stats
+                flops_delta = epoch_stats['cumulative_flops'] - cumulative_flops
+                cumulative_flops = epoch_stats['cumulative_flops']
+                progress_bar.update(flops_delta)
+                progress_bar.set_postfix({
+                    'epoch': epoch,
+                    'loss': f"{epoch_stats['avg_loss']:.4f}",
+                    'acc': f"{epoch_stats['avg_accuracy']:.4f}"
+                })
+                
+                # Log metrics to file only
+                logger.info(f"Epoch {epoch} - Loss: {epoch_stats['avg_loss']:.4f}, "
+                           f"Accuracy: {epoch_stats['avg_accuracy']:.4f}, "
+                           f"Cumulative FLOPs: {cumulative_flops:,}")
+                
+                loss_data.append((cumulative_flops, epoch_stats['avg_loss']))
+                accuracy_data.append((cumulative_flops, epoch_stats['avg_accuracy']))
+                
+                # Task-specific evaluation
+                if (cumulative_flops - last_task_sample >= params['task_sample_freq'] or 
+                    cumulative_flops >= params['flop_budget']):
+                    last_task_sample = cumulative_flops
+                    evaluate_tasks(model, tasks_dict, params, device, forward_flops,
+                                 cumulative_flops, task_accuracy_data)
+                
+                # Plotting
+                if cumulative_flops - last_plot >= params['plot_freq']:
+                    last_plot = cumulative_flops
+                    plot_progress(loss_data, accuracy_data, task_accuracy_data, 
+                                cumulative_flops, model_dir)
+    
+    finally:
+        # Clean up any remaining progress bars
+        try:
+            progress_bar.close()
+        except:
+            pass
 
-    while cumulative_flops < params['flop_budget']:
-        epoch += 1
-        epoch_stats = train_epoch(model, params, tasks_dict, criterion, optimizer, 
-                                forward_flops, backward_flops, logger)
-        
-        # Update progress and stats
-        flops_delta = epoch_stats['cumulative_flops'] - cumulative_flops
-        cumulative_flops = epoch_stats['cumulative_flops']
-        progress_bar.update(flops_delta)
-        progress_bar.set_postfix({
-            'epoch': epoch,
-            'loss': f"{epoch_stats['avg_loss']:.4f}",
-            'acc': f"{epoch_stats['avg_accuracy']:.4f}"
-        })
-        
-        # Log metrics to file only
-        logger.info(f"Epoch {epoch} - Loss: {epoch_stats['avg_loss']:.4f}, "
-                   f"Accuracy: {epoch_stats['avg_accuracy']:.4f}, "
-                   f"Cumulative FLOPs: {cumulative_flops:,}")
-        
-        loss_data.append((cumulative_flops, epoch_stats['avg_loss']))
-        accuracy_data.append((cumulative_flops, epoch_stats['avg_accuracy']))
-        
-        # Task-specific evaluation
-        if (cumulative_flops - last_task_sample >= params['task_sample_freq'] or 
-            cumulative_flops >= params['flop_budget']):
-            last_task_sample = cumulative_flops
-            evaluate_tasks(model, tasks_dict, params, device, forward_flops,
-                         cumulative_flops, task_accuracy_data)
-        
-        # Plotting
-        if cumulative_flops - last_plot >= params['plot_freq']:
-            last_plot = cumulative_flops
-            plot_progress(loss_data, accuracy_data, task_accuracy_data, 
-                        cumulative_flops, model_dir)
-
-    progress_bar.close()
     return {
         'loss_data': loss_data,
         'accuracy_data': accuracy_data,
@@ -165,8 +172,7 @@ def train_epoch(model, params, tasks_dict, criterion, optimizer, forward_flops, 
     total = 0
     cumulative_flops = 0
     
-    batch_progress = tqdm(data_loader, desc="Batches", position=2, leave=False)
-    for inputs, labels in batch_progress:
+    for inputs, labels in data_loader:
         outputs = model(inputs)
         batch_loss = criterion(outputs, labels.unsqueeze(1))
         predictions = (outputs >= 0.5).squeeze().long()
@@ -179,11 +185,6 @@ def train_epoch(model, params, tasks_dict, criterion, optimizer, forward_flops, 
 
         epoch_loss += batch_loss.item() * inputs.size(0)
         cumulative_flops += forward_flops + backward_flops
-        
-        batch_progress.set_postfix({
-            'loss': f'{batch_loss.item():.4f}',
-            'acc': f'{(predictions == labels).float().mean().item():.4f}'
-        })
 
     return {
         'avg_loss': epoch_loss / total,
