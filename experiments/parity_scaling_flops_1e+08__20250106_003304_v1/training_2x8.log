@@ -1,0 +1,16 @@
+2025-01-06 00:33:06,892 - INFO - Starting training for model 2x8
+2025-01-06 00:33:06,892 - INFO - Estimated FLOPs per batch - Forward: 10720, Backward: 22048
+2025-01-06 00:33:28,815 - INFO - Starting training for model 4x16
+2025-01-06 00:33:28,816 - INFO - Estimated FLOPs per batch - Forward: 61408, Backward: 121888
+2025-01-06 00:33:37,043 - INFO - Starting training for model 6x32
+2025-01-06 00:33:37,044 - INFO - Estimated FLOPs per batch - Forward: 333792, Backward: 661536
+2025-01-06 00:33:42,196 - INFO - Starting training for model 8x64
+2025-01-06 00:33:42,196 - INFO - Estimated FLOPs per batch - Forward: 1744864, Backward: 3469344
+2025-01-06 00:33:44,507 - INFO - Starting training for model 10x128
+2025-01-06 00:33:44,507 - INFO - Estimated FLOPs per batch - Forward: 8789984, Backward: 17522720
+2025-01-06 00:33:46,674 - INFO - Starting training for model 12x256
+2025-01-06 00:33:46,674 - INFO - Estimated FLOPs per batch - Forward: 42860512, Backward: 85573664
+2025-01-06 00:33:46,675 - WARNING - Model requires 128,434,176 FLOPs per epoch, which exceeds budget of 100,000,000.0
+2025-01-06 00:33:47,152 - INFO - Starting training for model 14x512
+2025-01-06 00:33:47,153 - INFO - Estimated FLOPs per batch - Forward: 203390944, Backward: 406421536
+2025-01-06 00:33:47,155 - WARNING - Model requires 609,812,480 FLOPs per epoch, which exceeds budget of 100,000,000.0
