@@ -34,7 +34,7 @@ PARAMS = {
     'output_size': 1,
     'learning_rate': 0.005,
     'batch_size': 32,
-    'flop_budget': 1e8, # total number of estimated flops expended per training run
+    'flop_budget': 1e10, # total number of estimated flops expended per training run
     'task_sample_freq': 1e5,  # flop_budget/1e3
     'plot_freq': 2e7,  # flop_budget/5
     'samples_per_task': 100
