@@ -42,8 +42,13 @@ def generate_dataset_for_task(task_code, tasks_dict, num_samples, len_taskcode, 
 
 class CustomDataset(Dataset):
     def __init__(self, dataframe, device):
-        self.data = torch.tensor(dataframe.iloc[:, :-1].values, dtype=torch.float32, device=device)
-        self.target = torch.tensor(dataframe.iloc[:, -1].values, dtype=torch.float32, device=device)
+        # Convert to numpy first for efficiency
+        data_np = dataframe.iloc[:, :-1].values
+        target_np = dataframe.iloc[:, -1].values
+        
+        # Single transfer to device. IO-aware for greater efficiency
+        self.data = torch.from_numpy(data_np).float().to(device)
+        self.target = torch.from_numpy(target_np).float().to(device)
     
     def __len__(self):
         return len(self.data)
