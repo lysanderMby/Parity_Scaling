@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import numpy as np
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from pathlib import Path
 from data.synthetic_data import generate_dataset, generate_dataset_for_task, CustomDataset
 from utils.plotting import plot_progress
@@ -199,11 +199,17 @@ def train_and_evaluate(model, params, tasks_dict, exp_dir: Path, model_config: d
     }
 
 def train_epoch(model, params, tasks_dict, criterion, optimizer, forward_flops, backward_flops, logger):
+    # Generate data on CPU. Lightweight random operations
     [data, value] = generate_dataset(tasks_dict, params['num_samples'], 
                                    params['len_taskcode'], params['len_message'])
     
-    df = pd.DataFrame(np.concatenate((data, value.reshape(-1, 1)), axis=1))
-    dataset = CustomDataset(df, next(model.parameters()).device)
+    # Convert to tensor and move to GPU in one operation
+    device = next(model.parameters()).device
+    data_tensor = torch.from_numpy(data).float().to(device)
+    value_tensor = torch.from_numpy(value).float().to(device)
+    
+    # Create dataset directly with GPU tensors
+    dataset = TensorDataset(data_tensor, value_tensor)
     data_loader = DataLoader(dataset, batch_size=params['batch_size'], shuffle=True)
     
     model.train()
@@ -213,10 +219,14 @@ def train_epoch(model, params, tasks_dict, criterion, optimizer, forward_flops, 
     epoch_flops = 0  # Track FLOPs for this epoch
     
     for inputs, labels in data_loader:
+        # Main training loop. Note that the model predictions are binary, and so 0.5 is an appropriate threshold
+        # Data has already been moved to device
         outputs = model(inputs)
         batch_loss = criterion(outputs, labels.unsqueeze(1))
         predictions = (outputs >= 0.5).squeeze().long()
-        correct += (predictions == labels).sum().item()
+        
+        # Compute metrics on GPU
+        correct += (predictions == labels).sum()
         total += labels.size(0)
 
         optimizer.zero_grad()
@@ -227,10 +237,11 @@ def train_epoch(model, params, tasks_dict, criterion, optimizer, forward_flops, 
         # Add FLOPs for this batch
         epoch_flops += forward_flops + backward_flops
 
+    # Move metrics to CPU only at the end
     return {
         'avg_loss': epoch_loss / total,
-        'avg_accuracy': correct / total,
-        'epoch_flops': epoch_flops  # Return epoch FLOPs instead of cumulative
+        'avg_accuracy': (correct / total).cpu().item(),
+        'epoch_flops': epoch_flops # Return epoch FLOPs instead of cumulative
     }
 
 def evaluate_tasks(model, tasks_dict, params, device, forward_flops, 
